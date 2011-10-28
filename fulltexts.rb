@@ -1,8 +1,8 @@
 require 'rubygems'
 require 'open-uri'
 require 'cgi'
-require 'readability'
-require 'utils'
+require './readability'
+require './utils'
 
 # cache the full texts
 # given a link, first see whether the text has been downloaded to the local directory
@@ -33,9 +33,7 @@ end
 def extract(link)
 	source = get_html(link)
 	doc = Readability::Document.new(source, :debug=>true)#; p doc.html.encoding
-	encoding = doc.html.encoding
-	encoding = "GBK" if encoding.nil?
-	Iconv.iconv('utf-8', encoding, doc.content).join
+	doc.content
 end
 
 def save(link, text); save_string_to_file(text, get_text_path(link)); end
@@ -51,9 +49,13 @@ def get_html(link)
 	text = read_local_html(link)
 	return text unless text.nil?
 	puts "retrieving url #{link} ............"
-	text = open(link).read
-	save_string_to_file(text, get_html_path(link))
-	return text
+	a = open(link)
+	p a.charset
+	text = a.read
+	utf8_text = text.force_encoding(a.charset).encode('UTF-8')
+	utf8_text = utf8_text.sub(a.charset, 'UTF-8')
+	save_string_to_file(utf8_text, get_html_path(link))
+	return utf8_text
 end
 
 def read_file_content(path); File.exist?(path) ? File.new(path, 'r').read : nil; end

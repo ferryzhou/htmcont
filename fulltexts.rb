@@ -50,8 +50,9 @@ def get_html(link)
 	return text unless text.nil?
 	puts "retrieving url #{link} ............"
 	a = open(link)
-	p a.charset
 	text = a.read
+	cs = a.charset
+	cs = 'GBK' if cs.nil?
 	utf8_text = text.force_encoding(a.charset).encode('UTF-8')
 	utf8_text = utf8_text.sub(a.charset, 'UTF-8')
 	save_string_to_file(utf8_text, get_html_path(link))

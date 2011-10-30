@@ -25,6 +25,10 @@ module Readability
     def make_html
       @html = Nokogiri::HTML(@input)
     end
+	
+	def title
+	  @html.title
+	end
 
     REGEXES = {
         :unlikelyCandidatesRe => /combx|comment|community|disqus|extra|foot|header|menu|remark|rss|shoutbox|sidebar|sponsor|ad-break|agegate|pagination|pager|popup/i,
@@ -51,7 +55,8 @@ module Readability
       best_candidate = select_best_candidate(candidates)
       article = get_article(candidates, best_candidate)
 
-      cleaned_article = sanitize(article, candidates, options)
+	  cleaned_article = article.to_html
+      #cleaned_article = sanitize(article, candidates, options)
       if article.text.strip.length < options[:retry_length]
         if @remove_unlikely_candidates
           @remove_unlikely_candidates = false

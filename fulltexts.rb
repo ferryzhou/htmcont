@@ -47,14 +47,10 @@ def read_local_html(link); read_file_content(get_html_path(link)); end
 def get_html(link)
 	puts "reading local #{link} ............"
 	text = read_local_html(link)
+	text.force_encoding('utf-8')
 	return text unless text.nil?
 	puts "retrieving url #{link} ............"
-	a = open(link)
-	text = a.read
-	cs = a.charset
-	cs = 'GBK' if cs.nil?
-	utf8_text = text.force_encoding(a.charset).encode('UTF-8')
-	utf8_text = utf8_text.sub(a.charset, 'UTF-8')
+	utf8_text = get_utf8_html(link)
 	save_string_to_file(utf8_text, get_html_path(link))
 	return utf8_text
 end

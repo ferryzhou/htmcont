@@ -1,5 +1,5 @@
 require 'open-uri'
-require 'utils'
+require './utils'
 
 a = open(ARGV[0])
 p a.charset

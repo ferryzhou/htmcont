@@ -1,5 +1,7 @@
 require './fulltexts'
 
+include Htmcont
+
 fr = FulltextRetriever.new('test_fulltexts')
 #puts fr.get('http://tech.qq.com/a/20110321/000279.htm') #gb2312
 #puts fr.get('http://china.huanqiu.com/roll/2011-03/1582917.html') #utf-8

@@ -4,6 +4,7 @@ require 'cgi'
 require './readability'
 require './utils'
 
+module Htmcont
 # cache the full texts
 # given a link, first see whether the text has been downloaded to the local directory
 # if exist, read it and return; else read the url, save and return
@@ -47,8 +48,10 @@ def read_local_html(link); read_file_content(get_html_path(link)); end
 def get_html(link)
 	puts "reading local #{link} ............"
 	text = read_local_html(link)
-	text.force_encoding('utf-8')
-	return text unless text.nil?
+	if not text.nil? 
+	  text.force_encoding('utf-8')
+	  return text
+	end
 	puts "retrieving url #{link} ............"
 	utf8_text = get_utf8_html(link)
 	save_string_to_file(utf8_text, get_html_path(link))
@@ -56,5 +59,7 @@ def get_html(link)
 end
 
 def read_file_content(path); File.exist?(path) ? File.new(path, 'r').read : nil; end
+
+end
 
 end

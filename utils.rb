@@ -3,7 +3,14 @@ require 'fileutils'
 require 'iconv'
 require 'zlib'
 
+module Htmcont
+
 def trim(str); str.strip! || str; end
+
+def trim_title(raw_title)
+  ind = raw_title.index(/[_-]/)
+  ind.nil? ? raw_title : trim(raw_title[0...ind])
+end
 
 def mkdir_if_not_exist(path); FileUtils.mkdir_p(path) unless File.exist?(path); end
 	
@@ -49,20 +56,24 @@ end
 def get_utf8_html(link)
   a = open(link); p "header charset: #{a.charset}"
   text = a.read; p "text encoding: #{text.encoding.to_s}"
-  cs = get_charset(text); p "charset: #{cs}"
-  #utf8_text = text.force_encoding(cs).encode('UTF-8')
-  #html = utf8_text
+  #p "get raw html time: #{Time.now - st}"
   enc = a.meta['content-encoding']
   if enc == 'gzip' || enc == 'inflate'
     text = uncompress(text, enc)
+    cs = get_charset(text); p "ziped charset: #{cs}"
+    text = text.force_encoding(cs).encode('UTF-8')
+    text = text.sub(cs, 'UTF-8')
   end
+  cs = get_charset(text); p "charset: #{cs}"
   html = text
   if "iso-8859-1".casecmp(cs) == 0 || "utf-8".casecmp(text.encoding.to_s) !=0
-    if "utf-8".casecmp(cs) != 0
+    if "utf-8".casecmp(cs) != 0 && "utf-8".casecmp(text.encoding.to_s) !=0
 	  p 'wrong charset, change'
 	  html = text.force_encoding('GBK').encode('UTF-8')
     end
   end
   html = html.force_encoding('utf-8')
-  html.sub(cs, 'UTF-8')
+  html = html.sub(cs, 'UTF-8')
+end
+
 end

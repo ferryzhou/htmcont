@@ -1,0 +1,19 @@
+GIT
+  remote: git://github.com/ferryzhou/ruby-readability.git
+  revision: 882b2c8a0f67f5ed9084bda5a3427b3c1790ec91
+  specs:
+    ruby-readability (0.5.8)
+      guess_html_encoding (>= 0.0.4)
+      nokogiri (>= 1.4.2)
+
+GEM
+  remote: http://rubygems.org/
+  specs:
+    guess_html_encoding (0.0.7)
+    nokogiri (1.5.6)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  ruby-readability!

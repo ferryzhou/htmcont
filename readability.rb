@@ -20,14 +20,13 @@ module Readability
       @remove_unlikely_candidates = @options[:remove_unlikely_candidates]
       @weight_classes = @options[:weight_classes]
       @clean_conditionally = @options[:clean_conditionally]
-	  @page_url = @options[:page_url]
       make_html
     end
 
     def make_html
       @html = Nokogiri::HTML(@input)
     end
-	
+
 	def make_absolute( href, root )
 	  puts "making absolute " + href
 	  URI.parse(root).merge(URI.parse(href)).to_s
@@ -82,9 +81,12 @@ module Readability
           return cleaned_article
         end
 
+		p "make html"
         make_html
+		p "content"
         content
       else
+	    p "cleaned article"
         cleaned_article
       end
     end

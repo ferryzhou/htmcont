@@ -1,3 +1,9 @@
 == Extract Content inside HTML
 
-tested under ruby 1.9.2
+modified ruby-readability
+
+user can add custom extractor for specific website, which is useful when ruby-readability fails
+
+this library is mainly used for chinese website
+
+

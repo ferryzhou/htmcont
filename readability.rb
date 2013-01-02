@@ -1,45 +1,122 @@
 require 'rubygems'
 require 'nokogiri'
-require 'uri'
+require 'guess_html_encoding'
 
 module Readability
   class Document
     DEFAULT_OPTIONS = {
-      :retry_length => 250,
-      :min_text_length => 25,
+      :retry_length               => 250,
+      :min_text_length            => 25,
       :remove_unlikely_candidates => true,
-      :weight_classes => true,
-      :clean_conditionally => true,
+      :weight_classes             => true,
+      :clean_conditionally        => true,
+      :remove_empty_nodes         => true,
+      :min_image_width            => 130,
+      :min_image_height           => 80,
+      :ignore_image_format        => []
     }.freeze
 
-    attr_accessor :options, :html
+    attr_accessor :options, :html, :best_candidate, :candidates, :best_candidate_has_image
 
     def initialize(input, options = {})
-      @input = input.gsub(REGEXES[:replaceBrsRe], '</p><p>').gsub(REGEXES[:replaceFontsRe], '<\1span>')
       @options = DEFAULT_OPTIONS.merge(options)
+      @input = input
+
+      if RUBY_VERSION =~ /^1\.9\./ && !@options[:encoding]
+        @input = GuessHtmlEncoding.encode(@input, @options[:html_headers]) unless @options[:do_not_guess_encoding]
+        @options[:encoding] = @input.encoding.to_s
+      end
+
+      @input = @input.gsub(REGEXES[:replaceBrsRe], '</p><p>').gsub(REGEXES[:replaceFontsRe], '<\1span>')
       @remove_unlikely_candidates = @options[:remove_unlikely_candidates]
       @weight_classes = @options[:weight_classes]
       @clean_conditionally = @options[:clean_conditionally]
+      @best_candidate_has_image = true
       make_html
     end
 
-    def make_html
-      @html = Nokogiri::HTML(@input)
+    def prepare_candidates
+      @html.css("script, style").each { |i| i.remove }
+      remove_unlikely_candidates! if @remove_unlikely_candidates
+      transform_misused_divs_into_paragraphs!
+      
+      @candidates     = score_paragraphs(options[:min_text_length])
+      @best_candidate = select_best_candidate(@candidates)
     end
 
-	def make_absolute( href, root )
-	  puts "making absolute " + href
-	  URI.parse(root).merge(URI.parse(href)).to_s
-	end
+    def make_html
+      @html = Nokogiri::HTML(@input, nil, @options[:encoding])
+      # In case document has no body, such as from empty string or redirect
+      @html = Nokogiri::HTML('<body />', nil, @options[:encoding]) if @html.css('body').length == 0
 
-	def img_src_to_absolute_path(root)
-	  imgs = @html.css "img"
-	  imgs.each { |img| img['src'] = make_absolute(img['src'], root) }
-	end
-	
-	def title
-	  @html.title
-	end
+      # Remove html comment tags
+      @html.xpath('//comment()').each { |i| i.remove }
+    end
+
+    def images(content=nil, reload=false)
+      begin
+        require 'fastimage'
+      rescue LoadError
+        raise "Please install fastimage in order to use the #images feature."
+      end
+
+      @best_candidate_has_image = false if reload
+
+      prepare_candidates
+      list_images   = []
+      tested_images = []
+      content       = @best_candidate[:elem] unless reload
+
+      return list_images if content.nil?
+      elements = content.css("img").map(&:attributes)
+
+        elements.each do |element|
+          next unless element["src"]
+
+          url     = element["src"].value
+          height  = element["height"].nil?  ? 0 : element["height"].value.to_i
+          width   = element["width"].nil?   ? 0 : element["width"].value.to_i
+          
+          if url =~ /\Ahttps?:\/\//i && (height.zero? || width.zero?)
+            image   = get_image_size(url) 
+            next unless image
+          else
+            image = {:width => width, :height => height}
+          end
+          
+          image[:format] = File.extname(url).gsub(".", "")
+          
+          if tested_images.include?(url)
+            debug("Image was tested: #{url}")
+            next
+          end
+
+          tested_images.push(url)
+          if image_meets_criteria?(image)
+            list_images << url
+          else
+            debug("Image discarded: #{url} - height: #{image[:height]} - width: #{image[:width]} - format: #{image[:format]}")
+          end
+        end
+
+      (list_images.empty? and content != @html) ? images(@html, true) : list_images
+    end
+
+    def get_image_size(url)
+      begin
+        w, h = FastImage.size(url)
+        raise "Couldn't get size." if w.nil? || h.nil?
+        {width: w, height: h}
+      rescue => e
+        debug("Image error: #{e}")
+        nil
+      end
+    end
+
+    def image_meets_criteria?(image)
+      return false if options[:ignore_image_format].include?(image[:format].downcase)
+      image[:width] >= (options[:min_image_width] || 0) && image[:height] >= (options[:min_image_height] || 0)
+    end
 
     REGEXES = {
         :unlikelyCandidatesRe => /combx|comment|community|disqus|extra|foot|header|menu|remark|rss|shoutbox|sidebar|sponsor|ad-break|agegate|pagination|pager|popup/i,
@@ -55,20 +132,67 @@ module Readability
         :videoRe => /http:\/\/(www\.)?(youtube|vimeo)\.com/i
     }
 
+    def title
+      title = @html.css("title").first
+      title ? title.text : nil
+    end
+
+    # Look through the @html document looking for the author
+    # Precedence Information here on the wiki: (TODO attach wiki URL if it is accepted)
+    # Returns nil if no author is detected
+    def author
+      # Let's grab this author:
+      # <meta name="dc.creator" content="Finch - http://www.getfinch.com" />
+      author_elements = @html.xpath('//meta[@name = "dc.creator"]')
+      unless author_elements.empty?
+        author_elements.each do |element|
+          if element['content']
+            return element['content'].strip
+          end
+        end
+      end
+
+      # Now let's try to grab this
+      # <span class="byline author vcard"><span>By</span><cite class="fn">Austin Fonacier</cite></span>
+      # <div class="author">By</div><div class="author vcard"><a class="url fn" href="http://austinlivesinyoapp.com/">Austin Fonacier</a></div>
+      author_elements = @html.xpath('//*[contains(@class, "vcard")]//*[contains(@class, "fn")]')
+      unless author_elements.empty?
+        author_elements.each do |element|
+          if element.text
+            return element.text.strip
+          end
+        end
+      end
+
+      # Now let's try to grab this
+      # <a rel="author" href="http://dbanksdesign.com">Danny Banks (rel)</a>
+      # TODO: strip out the (rel)?
+      author_elements = @html.xpath('//a[@rel = "author"]')
+      unless author_elements.empty?
+        author_elements.each do |element|
+          if element.text
+            return element.text.strip
+          end
+        end
+      end
+
+      author_elements = @html.xpath('//*[@id = "author"]')
+      unless author_elements.empty?
+        author_elements.each do |element|
+          if element.text
+            return element.text.strip
+          end
+        end
+      end
+    end
+
     def content(remove_unlikely_candidates = :default)
       @remove_unlikely_candidates = false if remove_unlikely_candidates == false
 
-      @html.css("script, style").each { |i| i.remove }
-	  img_src_to_absolute_path(@page_url) if not @page_url.nil?
+      prepare_candidates
+      article = get_article(@candidates, @best_candidate)
 
-      remove_unlikely_candidates! if @remove_unlikely_candidates
-      transform_misused_divs_into_paragraphs!
-      candidates = score_paragraphs(options[:min_text_length])
-      best_candidate = select_best_candidate(candidates)
-      article = get_article(candidates, best_candidate)
-
-	  cleaned_article = article.to_html
-      #cleaned_article = sanitize(article, candidates, options)
+      cleaned_article = sanitize(article, @candidates, options)
       if article.text.strip.length < options[:retry_length]
         if @remove_unlikely_candidates
           @remove_unlikely_candidates = false
@@ -81,12 +205,9 @@ module Readability
           return cleaned_article
         end
 
-		p "make html"
         make_html
-		p "content"
         content
       else
-	    p "cleaned article"
         cleaned_article
       end
     end
@@ -115,8 +236,9 @@ module Readability
         end
 
         if append
-          sibling.name = "div" unless %w[div p].include?(sibling.name.downcase)
-          output << sibling
+          sibling_dup = sibling.dup # otherwise the state of the document in processing will change, thus creating side effects
+          sibling_dup.name = "div" unless %w[div p].include?(sibling.name.downcase)
+          output << sibling_dup
         end
       end
 
@@ -126,8 +248,7 @@ module Readability
     def select_best_candidate(candidates)
       sorted_candidates = candidates.values.sort { |a, b| b[:content_score] <=> a[:content_score] }
 
-      debug("Top 5 canidates:")
-	  debug("actually #{sorted_candidates.size} candidates:")
+      debug("Top 5 candidates:")
       sorted_candidates[0...5].each do |candidate|
         debug("Candidate #{candidate[:elem].name}##{candidate[:elem][:id]}.#{candidate[:elem][:class]} with score #{candidate[:content_score]}")
       end
@@ -139,7 +260,7 @@ module Readability
     end
 
     def get_link_density(elem)
-      link_length = elem.css("a").map {|i| i.text}.join("").length
+      link_length = elem.css("a").map(&:text).join("").length
       text_length = elem.text.length
       link_length / text_length.to_f
     end
@@ -223,7 +344,7 @@ module Readability
     def remove_unlikely_candidates!
       @html.css("*").each do |elem|
         str = "#{elem[:class]}#{elem[:id]}"
-        if str =~ REGEXES[:unlikelyCandidatesRe] && str !~ REGEXES[:okMaybeItsACandidateRe] && elem.name.downcase != 'body'
+        if str =~ REGEXES[:unlikelyCandidatesRe] && str !~ REGEXES[:okMaybeItsACandidateRe] && (elem.name.downcase != 'html') && (elem.name.downcase != 'body')
           debug("Removing unlikely candidate - #{str}")
           elem.remove
         end
@@ -242,7 +363,7 @@ module Readability
           # wrap text nodes in p tags
 #          elem.children.each do |child|
 #            if child.text?
-##              debug("wrapping text node with a p")
+#              debug("wrapping text node with a p")
 #              child.swap("<p>#{child.text}</p>")
 #            end
 #          end
@@ -250,7 +371,7 @@ module Readability
       end
     end
 
-    def sanitize(node, candidates, options = {})
+    def sanitize(node, candidates, options = {})    
       node.css("h1, h2, h3, h4, h5, h6").each do |header|
         header.remove if class_weight(header) < 0 || get_link_density(header) > 0.33
       end
@@ -259,9 +380,11 @@ module Readability
         elem.remove
       end
 
-      # remove empty <p> tags
-      node.css("p").each do |elem|
-        elem.remove if elem.content.strip.empty?
+      if @options[:remove_empty_nodes]
+        # remove <p> tags that have no text content - this will also remove p tags that contain only images.
+        node.css("p").each do |elem|
+          elem.remove if elem.content.strip.empty?
+        end
       end
 
       # Conditionally clean <table>s, <ul>s, and <div>s
@@ -280,7 +403,6 @@ module Readability
       base_replace_with_whitespace.each { |tag| replace_with_whitespace[tag] = true }
 
       ([node] + node.css("*")).each do |el|
-
         # If element is in whitelist, delete all its attributes
         if whitelist[el.node_name]
           el.attributes.each { |a, x| el.delete(a) unless @options[:attributes] && @options[:attributes].include?(a.to_s) }
@@ -288,13 +410,18 @@ module Readability
           # Otherwise, replace the element with its contents
         else
           if replace_with_whitespace[el.node_name]
-            # Adding &nbsp; here, because swap removes regular spaaces
-            el.swap('&nbsp;' << el.text << '&nbsp;')
+            el.swap(Nokogiri::XML::Text.new(' ' << el.text << ' ', el.document))
           else
-            el.swap(el.text)
+            el.swap(Nokogiri::XML::Text.new(el.text, el.document))
           end
         end
 
+      end
+      
+      if @options[:url]
+        node.css("img").each do |img| 
+          img['src'] = URI.parse(@options[:url]).merge(URI.parse(img['src'])).to_s
+        end
       end
 
       # Get rid of duplicate whitespace
@@ -350,6 +477,5 @@ module Readability
         end
       end
     end
-
   end
 end
